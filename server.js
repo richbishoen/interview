@@ -76,6 +76,22 @@ function friendlyError(e) {
   return e.message;
 }
 
+// 비한국어 문자 감지 후 자동 재교정
+async function groqCallKo(key, messages, maxTokens = 2048) {
+  let text = await groqCall(key, messages, maxTokens);
+
+  // 일본어(히라가나·카타카나), 한자, 프랑스어 악센트 감지
+  const hasBadChars = /[぀-ヿ一-鿿㐀-䶿À-ɏ]/.test(text);
+  if (hasBadChars) {
+    const fixMsg = [
+      { role: 'system', content: '당신은 한국어 교정 전문가입니다. 반드시 순수 한국어로만 응답하세요. 일본어, 한자, 외국어 문자를 절대 사용하지 마세요.' },
+      { role: 'user', content: `아래 텍스트에 일본어·한자·외국어 문자가 섞여 있습니다. 해당 부분을 자연스러운 한국어로 교체하여 전체를 다시 작성해 주세요. 의미와 형식은 그대로 유지하세요.\n\n${text}` },
+    ];
+    text = await groqCall(key, fixMsg, maxTokens);
+  }
+  return text;
+}
+
 // ──────────────────────────────────────────
 // API: 공고 분석
 // ──────────────────────────────────────────
@@ -111,7 +127,7 @@ ${companyInfo || '별도 회사 정보 없음'}
 }`;
 
   try {
-    const text = await groqCall(key, [{ role: 'user', content: prompt }], 2048);
+    const text = await groqCallKo(key, [{ role: 'user', content: prompt }], 2048);
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return res.status(500).json({ error: '분석 결과 파싱 실패' });
     res.json(JSON.parse(match[0]));
@@ -131,7 +147,7 @@ app.post('/api/interview', async (req, res) => {
   const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages];
 
   try {
-    const text = await groqCall(key, groqMessages, 600);
+    const text = await groqCallKo(key, groqMessages, 600);
     res.json({ text });
   } catch (e) {
     res.status(500).json({ error: friendlyError(e) });
@@ -176,7 +192,7 @@ ${convText}
 
   try {
     // 1) 텍스트 피드백
-    const text = await groqCall(key, [{ role: 'user', content: textPrompt }], 3000);
+    const text = await groqCallKo(key, [{ role: 'user', content: textPrompt }], 3000);
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return res.status(500).json({ error: '피드백 파싱 실패' });
     const result = JSON.parse(match[0]);
@@ -216,7 +232,7 @@ ${question}
 답변 예시:`;
 
   try {
-    const text = await groqCall(key, [{role: 'user', content: prompt}], 500);
+    const text = await groqCallKo(key, [{role: 'user', content: prompt}], 500);
     res.json({ hint: text.trim() });
   } catch (e) {
     res.status(500).json({ error: friendlyError(e) });
