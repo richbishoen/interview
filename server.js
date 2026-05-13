@@ -102,7 +102,7 @@ app.post('/api/interview', async (req, res) => {
 // API: 피드백 생성
 // ──────────────────────────────────────────
 app.post('/api/feedback', async (req, res) => {
-  const { conversation, analysisData, apiKey } = req.body;
+  const { conversation, analysisData, apiKey, frames } = req.body;
   const key = STORED_KEY || apiKey;
   if (!key) return res.status(400).json({ error: 'API 키가 필요합니다.' });
 
@@ -110,7 +110,8 @@ app.post('/api/feedback', async (req, res) => {
     .map(m => `[${m.role === 'user' ? '지원자' : '면접관'}]: ${m.content}`)
     .join('\n\n');
 
-  const prompt = `아래는 ${analysisData.company} ${analysisData.position} 포지션 모의 면접 전체 대화록입니다.
+  // 텍스트 피드백
+  const textPrompt = `아래는 ${analysisData.company} ${analysisData.position} 포지션 모의 면접 전체 대화록입니다.
 
 [면접 대화록]
 ${convText}
@@ -134,10 +135,40 @@ ${convText}
 }`;
 
   try {
-    const text = await geminiCall(key, [{ role: 'user', content: prompt }], 3000);
+    // 1) 텍스트 피드백
+    const text = await geminiCall(key, [{ role: 'user', content: textPrompt }], 3000);
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return res.status(500).json({ error: '피드백 파싱 실패' });
-    res.json(JSON.parse(match[0]));
+    const result = JSON.parse(match[0]);
+
+    // 2) 화상 피드백 (프레임이 있을 때만)
+    if (frames && frames.length > 0) {
+      try {
+        const parts = [
+          { text: `이 면접 지원자의 화면 캡처 이미지들을 분석해주세요. 면접 중 비언어적 커뮤니케이션을 평가하여 반드시 아래 JSON 형식으로만 답변하세요 (순수 JSON):
+{
+  "eyeContact": { "score": 4, "comment": "시선 처리 평가 (1-2문장)" },
+  "posture": { "score": 3, "comment": "자세 평가 (1-2문장)" },
+  "expression": { "score": 4, "comment": "표정 평가 (1-2문장)" },
+  "overall": "비언어적 커뮤니케이션 종합 평가 (2문장)",
+  "tips": ["개선 팁1", "개선 팁2"]
+}` },
+          ...frames.map(f => ({ inline_data: { mime_type: 'image/jpeg', data: f } })),
+        ];
+        const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + key;
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts }] }),
+        });
+        const vd = await r.json();
+        const vtext = vd.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        const vm = vtext.match(/\{[\s\S]*\}/);
+        if (vm) result.visualFeedback = JSON.parse(vm[0]);
+      } catch(e) { /* 화상 분석 실패해도 텍스트 결과는 반환 */ }
+    }
+
+    res.json(result);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -175,17 +206,34 @@ const HTML = `<!DOCTYPE html>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; background: #f8f9fc; }
+  body { margin: 0; font-family: 'Inter', -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif; background: #f2f0eb; }
+  .glass {
+    background: rgba(255,255,255,0.72);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.65);
+    box-shadow: 0 2px 20px rgba(0,0,0,0.055), 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .glass-dark {
+    background: rgba(26,26,26,0.94);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255,255,255,0.08);
+  }
   .chat-scroll { scroll-behavior: smooth; }
   @keyframes pulse-dot { 0%,80%,100%{transform:scale(0)} 40%{transform:scale(1)} }
   .dot { animation: pulse-dot 1.4s infinite ease-in-out both; }
   .dot:nth-child(1){animation-delay:-0.32s} .dot:nth-child(2){animation-delay:-0.16s}
+  textarea, input { outline: none; }
   textarea { resize: none; }
-  .fade-in { animation: fadeIn 0.3s ease; }
-  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-  ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-track { background: #f1f1f1; }
-  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  .fade-in { animation: fadeIn 0.25s ease; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.12); border-radius: 4px; }
+  ::placeholder { color: #b0aca4; }
 </style>
 </head>
 <body>
@@ -220,7 +268,7 @@ const ICONS = {
 const LoadingDots = () => (
   <div className="flex gap-1 items-center px-4 py-3">
     {[0,1,2].map(i => (
-      <span key={i} className="dot w-2 h-2 bg-indigo-400 rounded-full block" style={{animationDelay: \`\${i*-0.16}s\`}} />
+      <span key={i} className="dot w-2 h-2 bg-gray-400 rounded-full block" style={{animationDelay: \`\${i*-0.16}s\`}} />
     ))}
   </div>
 );
@@ -229,7 +277,7 @@ const LoadingDots = () => (
 const ScoreGauge = ({ score }) => {
   const r = 54, c = 2 * Math.PI * r;
   const offset = c - (score / 100) * c;
-  const color = score >= 80 ? '#16a34a' : score >= 60 ? '#4f46e5' : '#ea580c';
+  const color = score >= 80 ? '#16a34a' : score >= 60 ? '#1c1c1e' : '#ea580c';
   return (
     <div className="relative flex items-center justify-center" style={{width:140,height:140}}>
       <svg width="140" height="140" viewBox="0 0 140 140">
@@ -277,7 +325,16 @@ function App() {
   const [keyExpanded, setKeyExpanded] = useState(() => !localStorage.getItem('iw_key'));
   const [openCategory, setOpenCategory] = useState(null);
   const [openFeedback, setOpenFeedback] = useState(null);
+  // 음성/화상
+  const [voiceMode, setVoiceMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [webcamOn, setWebcamOn] = useState(false);
+  const [capturedFrames, setCapturedFrames] = useState([]);
   const chatEndRef = useRef(null);
+  const videoRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const captureTimerRef = useRef(null);
 
   const saveApiKey = () => {
     if (!apiKey.trim()) return;
@@ -291,6 +348,67 @@ function App() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  // 면접관 메시지 자동 음성 출력
+  useEffect(() => {
+    if (!voiceMode || messages.length === 0) return;
+    const last = messages[messages.length - 1];
+    if (last.role !== 'assistant') return;
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(last.content);
+    utter.lang = 'ko-KR'; utter.rate = 1.0; utter.pitch = 1.05;
+    utter.onstart = () => setIsSpeaking(true);
+    utter.onend = () => setIsSpeaking(false);
+    window.speechSynthesis.speak(utter);
+  }, [messages, voiceMode]);
+
+  // 음성 인식
+  const startListening = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setError('이 브라우저는 음성 인식을 지원하지 않습니다.'); return; }
+    window.speechSynthesis.cancel();
+    const rec = new SR();
+    rec.lang = 'ko-KR'; rec.continuous = false; rec.interimResults = false;
+    rec.onstart = () => setIsListening(true);
+    rec.onresult = e => { setInputText(e.results[0][0].transcript); setIsListening(false); };
+    rec.onerror = () => setIsListening(false);
+    rec.onend = () => setIsListening(false);
+    recognitionRef.current = rec;
+    rec.start();
+  };
+  const stopListening = () => { recognitionRef.current?.stop(); setIsListening(false); };
+
+  // 웹캠
+  const toggleWebcam = async () => {
+    if (webcamOn) {
+      const stream = videoRef.current?.srcObject;
+      stream?.getTracks().forEach(t => t.stop());
+      if (videoRef.current) videoRef.current.srcObject = null;
+      clearInterval(captureTimerRef.current);
+      setWebcamOn(false);
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); }
+        setWebcamOn(true);
+        // 30초마다 프레임 캡처
+        captureTimerRef.current = setInterval(() => {
+          if (!videoRef.current) return;
+          const c = document.createElement('canvas'); c.width = 320; c.height = 240;
+          c.getContext('2d').drawImage(videoRef.current, 0, 0, 320, 240);
+          setCapturedFrames(prev => [...prev.slice(-4), c.toDataURL('image/jpeg', 0.6).split(',')[1]]);
+        }, 30000);
+      } catch(e) { setError('카메라 접근 권한이 필요합니다.'); }
+    }
+  };
+
+  // 면접 종료 시 웹캠 정리
+  const cleanupWebcam = () => {
+    const stream = videoRef.current?.srcObject;
+    stream?.getTracks().forEach(t => t.stop());
+    clearInterval(captureTimerRef.current);
+    setWebcamOn(false);
+  };
 
   // 공고 분석
   const handleAnalyze = async () => {
@@ -395,12 +513,22 @@ function App() {
 
   // 면접 종료 → 피드백
   const handleEndInterview = async () => {
+    window.speechSynthesis.cancel();
+    // 마지막 프레임 캡처
+    if (webcamOn && videoRef.current) {
+      const c = document.createElement('canvas'); c.width = 320; c.height = 240;
+      c.getContext('2d').drawImage(videoRef.current, 0, 0, 320, 240);
+      const last = c.toDataURL('image/jpeg', 0.6).split(',')[1];
+      setCapturedFrames(prev => [...prev.slice(-4), last]);
+    }
+    cleanupWebcam();
     setScreen('analyzing');
     try {
+      const frames = capturedFrames.length > 0 ? capturedFrames : null;
       const r = await fetch('/api/feedback', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ conversation: messages, analysisData, apiKey }),
+        body: JSON.stringify({ conversation: messages, analysisData, apiKey, frames }),
       });
       const data = await r.json();
       if (data.error) throw new Error(data.error);
@@ -425,10 +553,10 @@ function App() {
   // ── 화면 렌더링 ──
 
   if (screen === 'analyzing') return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-indigo-50 to-white">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#f2f0eb]">
       <div className="text-center fade-in">
         <div className="w-16 h-16 mx-auto mb-6 relative">
-          <div className="w-16 h-16 rounded-full border-4 border-indigo-100 border-t-indigo-600 animate-spin"/>
+          <div className="w-16 h-16 rounded-full border-4 border-gray-100 border-t-gray-800 animate-spin"/>
         </div>
         <h2 className="text-xl font-semibold text-gray-800 mb-2">AI가 공고를 분석하고 있습니다</h2>
         <p className="text-gray-500 text-sm">핵심 질문을 추출하고 면접관을 준비하는 중...</p>
@@ -442,13 +570,13 @@ function App() {
     return (
     <div className="min-h-screen bg-white">
       {/* 헤더 */}
-      <div className="border-b border-gray-100 px-6 py-3.5 flex items-center justify-between">
+      <div className="glass sticky top-0 z-10 px-6 py-3.5 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+          <div className="w-7 h-7 bg-gray-900 rounded-lg flex items-center justify-center">
             <Icon d={ICONS.mic} size={14} color="white"/>
           </div>
           <span className="font-bold text-gray-900">InterviewAI</span>
-          <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-medium">Beta</span>
+          <span className="text-xs bg-stone-100 text-gray-900 px-2 py-0.5 rounded-full font-medium">Beta</span>
         </div>
         {/* API 키 연결 상태 */}
         {keyConnected && !keyExpanded ? (
@@ -474,8 +602,8 @@ function App() {
           {[['1', '공고 입력'], ['2', 'AI 분석'], ['3', '면접 시작']].map(([n, label], i) => (
             <React.Fragment key={n}>
               <div className="flex items-center gap-2">
-                <div className={\`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold \${i === 0 ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-400'}\`}>{n}</div>
-                <span className={\`text-xs font-medium \${i === 0 ? 'text-indigo-600' : 'text-gray-400'}\`}>{label}</span>
+                <div className={\`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold \${i === 0 ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-400'}\`}>{n}</div>
+                <span className={\`text-xs font-medium \${i === 0 ? 'text-gray-900' : 'text-gray-400'}\`}>{label}</span>
               </div>
               {i < 2 && <div className="w-10 h-px bg-gray-200 mx-2"/>}
             </React.Fragment>
@@ -501,7 +629,7 @@ function App() {
                   onChange={e => { setApiKey(e.target.value); setKeyConnected(false); }}
                   onKeyDown={e => e.key === 'Enter' && saveApiKey()}
                   placeholder="AIzaSy..."
-                  className="w-full border border-gray-200 bg-white rounded-xl px-4 py-2.5 text-sm font-mono pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                  className="w-full border border-gray-200 bg-white rounded-xl px-4 py-2.5 text-sm font-mono pr-10 focus:outline-none focus:ring-2 focus:ring-gray-300"
                 />
                 <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
                   <Icon d={showKey ? ICONS.eyeOff : ICONS.eye} size={16}/>
@@ -510,7 +638,7 @@ function App() {
               <button
                 onClick={saveApiKey}
                 disabled={!apiKey.trim()}
-                className={\`px-4 py-2.5 rounded-xl text-sm font-semibold transition-all shrink-0 \${keySaved ? 'bg-green-500 text-white' : 'bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 text-white'}\`}
+                className={\`px-4 py-2.5 rounded-xl text-sm font-semibold transition-all shrink-0 \${keySaved ? 'bg-green-500 text-white' : 'bg-gray-900 hover:bg-gray-800 disabled:bg-gray-200 disabled:text-gray-400 text-white'}\`}
               >
                 {keySaved ? '✓ 저장됨' : '저장'}
               </button>
@@ -526,7 +654,7 @@ function App() {
               <span className="text-sm font-semibold text-gray-800">채용 공고</span>
               <span className="text-xs text-red-400 font-medium">필수</span>
             </div>
-            {jobPosting && <span className="text-xs text-indigo-500 font-medium">✓ 입력됨</span>}
+            {jobPosting && <span className="text-xs text-gray-500 font-medium">✓ 입력됨</span>}
           </div>
           <textarea
             value={jobPosting}
@@ -538,7 +666,7 @@ function App() {
 
         {/* 하단 행: 회사정보 + 면접유형 */}
         <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <div className="glass rounded-2xl p-4">
             <div className="flex items-center gap-2 mb-2">
               <Icon d={ICONS.building} size={14} color="#6366f1"/>
               <span className="text-xs font-semibold text-gray-700">회사 정보</span>
@@ -551,7 +679,7 @@ function App() {
               className="w-full h-28 text-xs focus:outline-none text-gray-700 leading-relaxed"
             />
           </div>
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+          <div className="glass rounded-2xl p-4">
             <div className="flex items-center gap-2 mb-3">
               <Icon d={ICONS.user} size={14} color="#4f46e5"/>
               <span className="text-xs font-semibold text-gray-700">면접 유형</span>
@@ -563,7 +691,7 @@ function App() {
                   onClick={() => setInterviewType(t)}
                   className={\`py-2 rounded-xl text-xs font-medium transition-all \${
                     interviewType === t
-                      ? 'bg-indigo-600 text-white shadow-sm'
+                      ? 'bg-gray-900 text-white shadow-sm'
                       : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'
                   }\`}
                 >{t}</button>
@@ -581,25 +709,22 @@ function App() {
         <button
           onClick={handleAnalyze}
           disabled={!canStart}
-          className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-100 text-white disabled:text-gray-400 font-semibold rounded-2xl text-sm transition-all shadow-lg shadow-indigo-100 hover:shadow-indigo-200 disabled:shadow-none"
+          className="w-full py-4 bg-gray-900 hover:bg-gray-800 disabled:bg-gray-100 text-white disabled:text-gray-400 font-semibold rounded-2xl text-sm transition-all shadow-lg shadow-indigo-100 hover:shadow-black/10 disabled:shadow-none"
         >
           {canStart ? '면접 준비 시작하기 →' : btnHint}
         </button>
       </div>
     </div>
-  );};
-      </div>
-    </div>
-  );
+  );}
 
   if (screen === 'briefing' && analysisData) {
     const allQ = Object.entries(analysisData.questions || {});
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+      <div className="min-h-screen bg-[#f2f0eb]">
         {/* 헤더 */}
         <div className="border-b border-gray-100 bg-white/80 backdrop-blur px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
               <Icon d={ICONS.mic} size={16} color="white"/>
             </div>
             <span className="font-bold text-gray-900">InterviewAI</span>
@@ -609,30 +734,30 @@ function App() {
 
         <div className="max-w-5xl mx-auto px-6 py-8">
           {/* 분석 완료 배너 */}
-          <div className="bg-indigo-600 rounded-2xl p-6 text-white mb-8 fade-in">
+          <div className="glass-dark rounded-2xl p-6 text-white mb-8 fade-in">
             <div className="flex items-start justify-between">
               <div>
-                <div className="text-indigo-200 text-sm font-medium mb-1">분석 완료</div>
+                <div className="text-gray-300 text-sm font-medium mb-1">분석 완료</div>
                 <h2 className="text-2xl font-bold mb-1">{analysisData.company}</h2>
-                <p className="text-indigo-100">{analysisData.position} · {interviewType}</p>
+                <p className="text-gray-200">{analysisData.position} · {interviewType}</p>
               </div>
               <div className="text-right">
-                <div className="text-indigo-200 text-xs mb-1">면접관</div>
+                <div className="text-gray-300 text-xs mb-1">면접관</div>
                 <div className="font-semibold">{analysisData.interviewerName} 면접관</div>
-                <div className="text-indigo-200 text-sm">{analysisData.department}</div>
+                <div className="text-gray-300 text-sm">{analysisData.department}</div>
               </div>
             </div>
             {/* 키워드 */}
             <div className="mt-4 pt-4 border-t border-indigo-500 flex flex-wrap gap-2">
               {(analysisData.keywords || []).map(k => (
-                <span key={k} className="bg-indigo-500/50 text-white text-xs px-3 py-1 rounded-full">{k}</span>
+                <span key={k} className="bg-stone-1000/50 text-white text-xs px-3 py-1 rounded-full">{k}</span>
               ))}
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             {/* 예상 질문 */}
-            <div className="md:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+            <div className="md:col-span-2 glass rounded-2xl p-6">
               <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
                 <Icon d={ICONS.target} size={18} color="#4f46e5"/>
                 예상 핵심 질문
@@ -646,7 +771,7 @@ function App() {
                     >
                       <span className="font-medium text-gray-800 text-sm">{category}</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">{qs.length}개</span>
+                        <span className="text-xs bg-stone-100 text-gray-900 px-2 py-0.5 rounded-full">{qs.length}개</span>
                         <Icon d={ICONS.chevron} size={16} color="#9ca3af" className={\`transition-transform \${openCategory === category ? 'rotate-90' : ''}\`}/>
                       </div>
                     </button>
@@ -654,7 +779,7 @@ function App() {
                       <div className="border-t border-gray-100 bg-gray-50/50 px-4 py-3 space-y-2">
                         {qs.map((q, i) => (
                           <div key={i} className="flex gap-2 text-sm text-gray-700">
-                            <span className="text-indigo-400 font-bold shrink-0">Q{i+1}.</span>
+                            <span className="text-gray-400 font-bold shrink-0">Q{i+1}.</span>
                             <span>{q}</span>
                           </div>
                         ))}
@@ -667,7 +792,7 @@ function App() {
 
             {/* 준비 팁 + 회사 가치 */}
             <div className="space-y-5">
-              <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <div className="glass rounded-2xl p-5">
                 <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2 text-sm">
                   <Icon d={ICONS.award} size={16} color="#f59e0b"/>
                   회사 핵심 가치
@@ -700,7 +825,7 @@ function App() {
 
           <button
             onClick={handleStartInterview}
-            className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl text-lg transition-all shadow-lg shadow-indigo-200 hover:shadow-indigo-300"
+            className="w-full py-4 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-2xl text-lg transition-all shadow-lg shadow-black/10 hover:shadow-black/15"
           >
             면접 시작하기 →
           </button>
@@ -710,65 +835,91 @@ function App() {
   }
 
   if (screen === 'interview') return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="h-screen flex flex-col bg-[#f2f0eb]">
       {/* 상단 바 */}
-      <div className="bg-white border-b border-gray-100 px-5 py-3 flex items-center justify-between shrink-0">
+      <div className="glass px-5 py-3 flex items-center justify-between shrink-0 z-10">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-            <Icon d={ICONS.mic} size={16} color="white"/>
+          <div className="w-7 h-7 bg-gray-900 rounded-lg flex items-center justify-center">
+            <Icon d={ICONS.mic} size={13} color="white"/>
           </div>
           <div>
             <div className="font-semibold text-gray-900 text-sm">{analysisData?.company} · {analysisData?.position}</div>
-            <div className="text-xs text-gray-500">{interviewType} · 면접관: {analysisData?.interviewerName}</div>
+            <div className="text-xs text-gray-500">{interviewType} · {analysisData?.interviewerName} 면접관</div>
           </div>
         </div>
-        <button
-          onClick={handleEndInterview}
-          className="px-4 py-2 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium rounded-xl transition-colors"
-        >
-          면접 종료 →
-        </button>
+        <div className="flex items-center gap-2">
+          {/* 음성 모드 토글 */}
+          <button
+            onClick={() => { setVoiceMode(v => !v); window.speechSynthesis.cancel(); }}
+            className={\`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all \${voiceMode ? 'bg-gray-900 text-white' : 'bg-white/60 text-gray-600 border border-gray-200 hover:bg-white'}\`}
+          >
+            <Icon d={ICONS.mic} size={12}/> {voiceMode ? '음성 ON' : '음성'}
+          </button>
+          {/* 화상 토글 */}
+          <button
+            onClick={toggleWebcam}
+            className={\`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all \${webcamOn ? 'bg-gray-900 text-white' : 'bg-white/60 text-gray-600 border border-gray-200 hover:bg-white'}\`}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 7l-7 5 7 5V7zM1 5h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H1a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg>
+            {webcamOn ? '화상 ON' : '화상'}
+          </button>
+          <button onClick={handleEndInterview} className="px-4 py-1.5 bg-gray-900 hover:bg-gray-800 text-white text-xs font-medium rounded-xl transition-colors">
+            종료 →
+          </button>
+        </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* 사이드바: 예상 질문 */}
-        <div className="w-64 bg-white border-r border-gray-100 flex flex-col overflow-y-auto shrink-0 hidden md:flex">
-          <div className="px-4 py-3 border-b border-gray-100">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">예상 질문 목록</p>
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* 웹캠 미리보기 (우하단 고정) */}
+        {webcamOn && (
+          <div className="absolute bottom-24 right-4 z-20 rounded-2xl overflow-hidden shadow-2xl border-2 border-white/50" style={{width:200,height:150}}>
+            <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover"/>
+            {isSpeaking && (
+              <div className="absolute inset-0 flex items-end justify-center pb-2">
+                <div className="bg-black/40 text-white text-xs px-2 py-0.5 rounded-full">면접관 말하는 중...</div>
+              </div>
+            )}
+          </div>
+        )}
+        {/* 웹캠 (화상 OFF일 때도 ref 유지용 숨김 video) */}
+        {!webcamOn && <video ref={videoRef} autoPlay muted playsInline className="hidden"/>}
+
+        {/* 사이드바 */}
+        <div className="w-56 flex flex-col overflow-y-auto shrink-0 hidden md:flex" style={{background:'rgba(255,255,255,0.45)', borderRight:'1px solid rgba(0,0,0,0.05)'}}>
+          <div className="px-4 py-3" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">예상 질문</p>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
             {Object.entries(analysisData?.questions || {}).map(([cat, qs]) => (
               <div key={cat} className="mb-4">
-                <p className="text-xs font-semibold text-indigo-500 px-2 mb-2">{cat}</p>
+                <p className="text-xs font-semibold text-gray-500 px-2 mb-1.5">{cat}</p>
                 {qs.map((q, i) => (
-                  <div key={i} className="text-xs text-gray-600 px-2 py-1.5 rounded-lg hover:bg-gray-50 leading-relaxed mb-1">
-                    {q}
-                  </div>
+                  <div key={i} className="text-xs text-gray-500 px-2 py-1.5 rounded-lg hover:bg-white/60 leading-relaxed mb-0.5 cursor-default transition-colors">{q}</div>
                 ))}
               </div>
             ))}
           </div>
         </div>
 
-        {/* 채팅 영역 */}
+        {/* 채팅 */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto p-5 space-y-4 chat-scroll">
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 chat-scroll">
             {messages.map((m, i) => (
               <div key={i} className={\`flex \${m.role === 'user' ? 'justify-end' : 'justify-start'} fade-in\`}>
                 {m.role === 'assistant' && (
-                  <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center mr-2 mt-1 shrink-0">
-                    <Icon d={ICONS.user} size={14} color="#4f46e5"/>
+                  <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center mr-2 mt-1 shrink-0 shadow-sm border border-gray-100">
+                    <Icon d={ICONS.user} size={14} color="#555"/>
                   </div>
                 )}
-                <div className={\`max-w-[75%] \${m.role === 'user' ? 'order-1' : ''}\`}>
+                <div className={\`max-w-[72%]\`}>
                   {m.role === 'assistant' && (
                     <p className="text-xs text-gray-400 mb-1 ml-1">{analysisData?.interviewerName} 면접관</p>
                   )}
                   <div className={\`px-4 py-3 rounded-2xl text-sm leading-relaxed \${
                     m.role === 'user'
-                      ? 'bg-indigo-600 text-white rounded-tr-sm'
-                      : 'bg-white text-gray-800 border border-gray-100 shadow-sm rounded-tl-sm'
-                  }\`}>
+                      ? 'bg-gray-900 text-white rounded-tr-sm'
+                      : 'bg-white/85 text-gray-800 shadow-sm rounded-tl-sm'
+                  }\`} style={m.role==='assistant'?{backdropFilter:'blur(12px)',border:'1px solid rgba(255,255,255,0.7)'}:{}}>
                     {m.content}
                   </div>
                 </div>
@@ -776,37 +927,79 @@ function App() {
             ))}
             {isLoading && (
               <div className="flex items-start fade-in">
-                <div className="w-8 h-8 bg-indigo-100 rounded-full flex items-center justify-center mr-2 shrink-0">
-                  <Icon d={ICONS.user} size={14} color="#4f46e5"/>
+                <div className="w-8 h-8 bg-white rounded-full flex items-center justify-center mr-2 shrink-0 shadow-sm border border-gray-100">
+                  <Icon d={ICONS.user} size={14} color="#555"/>
                 </div>
-                <div className="bg-white border border-gray-100 shadow-sm rounded-2xl rounded-tl-sm">
+                <div className="bg-white/85 rounded-2xl rounded-tl-sm shadow-sm" style={{backdropFilter:'blur(12px)',border:'1px solid rgba(255,255,255,0.7)'}}>
                   <LoadingDots/>
                 </div>
+              </div>
+            )}
+            {isSpeaking && !webcamOn && (
+              <div className="flex justify-center fade-in">
+                <div className="bg-white/70 text-gray-500 text-xs px-3 py-1 rounded-full shadow-sm">면접관이 말하는 중...</div>
               </div>
             )}
             <div ref={chatEndRef}/>
           </div>
 
           {/* 입력 영역 */}
-          <div className="border-t border-gray-100 bg-white p-4">
+          <div className="p-4" style={{background:'rgba(255,255,255,0.6)', backdropFilter:'blur(20px)', borderTop:'1px solid rgba(0,0,0,0.06)'}}>
             {error && <div className="text-xs text-red-500 mb-2">{error}</div>}
-            <div className="flex gap-3 items-end">
-              <textarea
-                value={inputText}
-                onChange={e => setInputText(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }}}
-                placeholder="답변을 입력하세요... (Enter: 전송, Shift+Enter: 줄바꿈)"
-                rows={3}
-                className="flex-1 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 text-gray-800 leading-relaxed"
-              />
-              <button
-                onClick={handleSend}
-                disabled={!inputText.trim() || isLoading}
-                className="w-12 h-12 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 rounded-xl flex items-center justify-center transition-colors shrink-0"
-              >
-                <Icon d={ICONS.send} size={18} color="white"/>
-              </button>
-            </div>
+            {voiceMode ? (
+              /* 음성 모드 입력 */
+              <div className="flex flex-col items-center gap-3">
+                {inputText && (
+                  <div className="w-full bg-white/80 rounded-xl px-4 py-2 text-sm text-gray-700 border border-gray-200">
+                    {inputText}
+                  </div>
+                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    onMouseDown={startListening}
+                    onMouseUp={stopListening}
+                    onTouchStart={startListening}
+                    onTouchEnd={stopListening}
+                    className={\`w-16 h-16 rounded-full flex items-center justify-center transition-all shadow-lg \${
+                      isListening
+                        ? 'bg-red-500 scale-110 shadow-red-200'
+                        : 'bg-gray-900 hover:bg-gray-800 shadow-black/20'
+                    }\`}
+                  >
+                    <Icon d={ICONS.mic} size={24} color="white"/>
+                  </button>
+                  {inputText && (
+                    <button
+                      onClick={() => { handleSend(); }}
+                      disabled={isLoading}
+                      className="px-5 py-2.5 bg-gray-900 hover:bg-gray-800 text-white text-sm font-medium rounded-xl transition-colors"
+                    >
+                      전송 →
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400">{isListening ? '🔴 듣는 중...' : '버튼을 누르고 말하세요'}</p>
+              </div>
+            ) : (
+              /* 텍스트 모드 입력 */
+              <div className="flex gap-3 items-end">
+                <textarea
+                  value={inputText}
+                  onChange={e => setInputText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }}}
+                  placeholder="답변을 입력하세요... (Enter 전송, Shift+Enter 줄바꿈)"
+                  rows={3}
+                  className="flex-1 bg-white/80 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300 text-gray-800 leading-relaxed"
+                />
+                <button
+                  onClick={handleSend}
+                  disabled={!inputText.trim() || isLoading}
+                  className="w-12 h-12 bg-gray-900 hover:bg-gray-800 disabled:bg-gray-200 rounded-xl flex items-center justify-center transition-colors shrink-0"
+                >
+                  <Icon d={ICONS.send} size={17} color="white"/>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -814,19 +1007,19 @@ function App() {
   );
 
   if (screen === 'feedback' && feedbackData) {
-    const gradeColor = feedbackData.overallScore >= 80 ? 'text-green-600' : feedbackData.overallScore >= 60 ? 'text-indigo-600' : 'text-orange-600';
+    const gradeColor = feedbackData.overallScore >= 80 ? 'text-green-600' : feedbackData.overallScore >= 60 ? 'text-gray-900' : 'text-orange-600';
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+      <div className="min-h-screen bg-[#f2f0eb]">
         {/* 헤더 */}
         <div className="border-b border-gray-100 bg-white/80 backdrop-blur px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
+            <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
               <Icon d={ICONS.mic} size={16} color="white"/>
             </div>
             <span className="font-bold text-gray-900">InterviewAI</span>
             <span className="text-sm text-gray-500">· 면접 결과 리포트</span>
           </div>
-          <button onClick={handleReset} className="flex items-center gap-2 text-sm text-indigo-600 hover:text-indigo-700 font-medium">
+          <button onClick={handleReset} className="flex items-center gap-2 text-sm text-gray-900 hover:text-indigo-700 font-medium">
             <Icon d={ICONS.refresh} size={16}/>
             다시 연습하기
           </button>
@@ -834,7 +1027,7 @@ function App() {
 
         <div className="max-w-4xl mx-auto px-6 py-8">
           {/* 종합 점수 카드 */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 mb-6 fade-in">
+          <div className="glass rounded-2xl p-6 mb-6 fade-in">
             <div className="flex items-center gap-8">
               <ScoreGauge score={feedbackData.overallScore}/>
               <div className="flex-1">
@@ -882,8 +1075,42 @@ function App() {
             </div>
           </div>
 
+          {/* 화상 피드백 (캡처 프레임이 있었던 경우) */}
+          {feedbackData.visualFeedback && (
+            <div className="glass rounded-2xl p-6 mb-6 fade-in">
+              <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#555" strokeWidth="2"><path d="M23 7l-7 5 7 5V7zM1 5h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H1a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg>
+                비언어 커뮤니케이션 분석
+              </h3>
+              <div className="grid grid-cols-3 gap-4 mb-4">
+                {[
+                  { label: '시선 처리', key: 'eyeContact' },
+                  { label: '자세', key: 'posture' },
+                  { label: '표정', key: 'expression' },
+                ].map(({ label, key }) => {
+                  const item = feedbackData.visualFeedback[key];
+                  return (
+                    <div key={key} className="bg-white/60 rounded-xl p-4 text-center">
+                      <div className="text-2xl font-bold text-gray-900 mb-1">{item?.score}<span className="text-sm text-gray-400">/5</span></div>
+                      <div className="text-xs font-semibold text-gray-600 mb-2">{label}</div>
+                      <div className="text-xs text-gray-500 leading-relaxed">{item?.comment}</div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="bg-stone-100 rounded-xl p-4 mb-3">
+                <p className="text-sm text-gray-700">{feedbackData.visualFeedback.overall}</p>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {(feedbackData.visualFeedback.tips || []).map((t, i) => (
+                  <span key={i} className="text-xs bg-gray-900 text-white px-3 py-1 rounded-full">{t}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* 질문별 상세 피드백 */}
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+          <div className="glass rounded-2xl p-6">
             <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
               <Icon d={ICONS.star} size={18} color="#4f46e5"/>
               질문별 상세 피드백
@@ -897,7 +1124,7 @@ function App() {
                   >
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-1">
-                        <span className="text-xs font-bold text-indigo-500">Q{i+1}</span>
+                        <span className="text-xs font-bold text-gray-500">Q{i+1}</span>
                         <Stars rating={qf.rating}/>
                       </div>
                       <p className="text-sm text-gray-700 font-medium">{qf.question}</p>
@@ -910,9 +1137,9 @@ function App() {
                         <p className="text-xs font-semibold text-gray-500 mb-1">피드백</p>
                         <p className="text-sm text-gray-700">{qf.feedback}</p>
                       </div>
-                      <div className="bg-indigo-50 rounded-xl p-3">
-                        <p className="text-xs font-semibold text-indigo-600 mb-1">더 좋은 답변 예시</p>
-                        <p className="text-sm text-indigo-800">{qf.betterAnswer}</p>
+                      <div className="bg-stone-100 rounded-xl p-3">
+                        <p className="text-xs font-semibold text-gray-900 mb-1">더 좋은 답변 예시</p>
+                        <p className="text-sm text-gray-800">{qf.betterAnswer}</p>
                       </div>
                     </div>
                   )}
@@ -924,7 +1151,7 @@ function App() {
           <div className="mt-6 flex gap-4">
             <button
               onClick={() => { setScreen('interview'); startInterview(); }}
-              className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl transition-all shadow-lg shadow-indigo-200"
+              className="flex-1 py-4 bg-gray-900 hover:bg-gray-800 text-white font-semibold rounded-2xl transition-all shadow-lg shadow-black/10"
             >
               같은 공고로 다시 연습하기
             </button>
