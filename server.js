@@ -273,6 +273,8 @@ function App() {
   const [feedbackData, setFeedbackData] = useState(null);
   const [error, setError] = useState('');
   const [keySaved, setKeySaved] = useState(false);
+  const [keyConnected, setKeyConnected] = useState(() => !!localStorage.getItem('iw_key'));
+  const [keyExpanded, setKeyExpanded] = useState(() => !localStorage.getItem('iw_key'));
   const [openCategory, setOpenCategory] = useState(null);
   const [openFeedback, setOpenFeedback] = useState(null);
   const chatEndRef = useRef(null);
@@ -281,6 +283,8 @@ function App() {
     if (!apiKey.trim()) return;
     localStorage.setItem('iw_key', apiKey.trim());
     setKeySaved(true);
+    setKeyConnected(true);
+    setKeyExpanded(false);
     setTimeout(() => setKeySaved(false), 2000);
   };
 
@@ -432,124 +436,158 @@ function App() {
     </div>
   );
 
-  if (screen === 'setup') return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
+  if (screen === 'setup') {
+    const canStart = jobPosting.trim() && apiKey.trim();
+    const btnHint = !apiKey.trim() ? 'API 키를 먼저 저장해주세요' : !jobPosting.trim() ? '채용 공고를 입력해주세요' : '';
+    return (
+    <div className="min-h-screen bg-white">
       {/* 헤더 */}
-      <div className="border-b border-gray-100 bg-white/80 backdrop-blur px-6 py-4 flex items-center gap-3">
-        <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center">
-          <Icon d={ICONS.mic} size={16} color="white"/>
+      <div className="border-b border-gray-100 px-6 py-3.5 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+            <Icon d={ICONS.mic} size={14} color="white"/>
+          </div>
+          <span className="font-bold text-gray-900">InterviewAI</span>
+          <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-medium">Beta</span>
         </div>
-        <span className="font-bold text-gray-900 text-lg">InterviewAI</span>
-        <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full font-medium ml-1">Beta</span>
+        {/* API 키 연결 상태 */}
+        {keyConnected && !keyExpanded ? (
+          <button onClick={() => setKeyExpanded(true)} className="flex items-center gap-1.5 text-xs bg-green-50 text-green-700 border border-green-200 px-3 py-1.5 rounded-full hover:bg-green-100 transition-colors font-medium">
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="#16a34a"><circle cx="5" cy="5" r="5"/></svg>
+            API 연결됨 · 변경
+          </button>
+        ) : (
+          <span className="text-xs text-gray-400">API 키 미설정</span>
+        )}
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 py-10">
+      <div className="max-w-3xl mx-auto px-6 py-8">
+
         {/* 히어로 */}
-        <div className="text-center mb-10">
-          <h1 className="text-4xl font-bold text-gray-900 mb-3">AI 면접 연습</h1>
-          <p className="text-gray-500 text-lg">공고를 붙여넣으면 실제 면접관처럼 질문하고, 상세한 피드백까지 드립니다</p>
+        <div className="text-center mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">AI 면접 연습</h1>
+          <p className="text-gray-400 text-sm">공고를 붙여넣으면 실제 면접관처럼 질문하고 상세한 피드백까지</p>
         </div>
 
-        {/* API 키 */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Icon d={ICONS.zap} size={16} color="#4f46e5"/>
-            <span className="text-sm font-semibold text-gray-700">Gemini API 키</span>
-            <span className="text-xs text-gray-400 ml-1">( aistudio.google.com → Get API Key · 무료 )</span>
-          </div>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <input
-                type={showKey ? 'text' : 'password'}
-                value={apiKey}
-                onChange={e => { setApiKey(e.target.value); setKeySaved(false); }}
-                onKeyDown={e => e.key === 'Enter' && saveApiKey()}
-                placeholder="AIzaSy..."
-                className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm font-mono pr-12 focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400"
-              />
-              <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-3 text-gray-400 hover:text-gray-600">
-                <Icon d={showKey ? ICONS.eyeOff : ICONS.eye} size={18}/>
+        {/* 스텝 인디케이터 */}
+        <div className="flex items-center justify-center gap-0 mb-8">
+          {[['1', '공고 입력'], ['2', 'AI 분석'], ['3', '면접 시작']].map(([n, label], i) => (
+            <React.Fragment key={n}>
+              <div className="flex items-center gap-2">
+                <div className={\`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold \${i === 0 ? 'bg-indigo-600 text-white' : 'bg-gray-100 text-gray-400'}\`}>{n}</div>
+                <span className={\`text-xs font-medium \${i === 0 ? 'text-indigo-600' : 'text-gray-400'}\`}>{label}</span>
+              </div>
+              {i < 2 && <div className="w-10 h-px bg-gray-200 mx-2"/>}
+            </React.Fragment>
+          ))}
+        </div>
+
+        {/* API 키 (접힌 상태면 숨김) */}
+        {keyExpanded && (
+          <div className="bg-gray-50 rounded-2xl border border-gray-200 p-4 mb-5 fade-in">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Icon d={ICONS.zap} size={14} color="#4f46e5"/>
+                <span className="text-sm font-semibold text-gray-700">Gemini API 키</span>
+                <span className="text-xs text-gray-400">aistudio.google.com → Get API Key · 무료</span>
+              </div>
+              {keyConnected && <button onClick={() => setKeyExpanded(false)} className="text-xs text-gray-400 hover:text-gray-600">닫기</button>}
+            </div>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  value={apiKey}
+                  onChange={e => { setApiKey(e.target.value); setKeyConnected(false); }}
+                  onKeyDown={e => e.key === 'Enter' && saveApiKey()}
+                  placeholder="AIzaSy..."
+                  className="w-full border border-gray-200 bg-white rounded-xl px-4 py-2.5 text-sm font-mono pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                />
+                <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
+                  <Icon d={showKey ? ICONS.eyeOff : ICONS.eye} size={16}/>
+                </button>
+              </div>
+              <button
+                onClick={saveApiKey}
+                disabled={!apiKey.trim()}
+                className={\`px-4 py-2.5 rounded-xl text-sm font-semibold transition-all shrink-0 \${keySaved ? 'bg-green-500 text-white' : 'bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 text-white'}\`}
+              >
+                {keySaved ? '✓ 저장됨' : '저장'}
               </button>
             </div>
-            <button
-              onClick={saveApiKey}
-              disabled={!apiKey.trim()}
-              className={\`px-5 py-3 rounded-xl text-sm font-semibold transition-all shrink-0 \${
-                keySaved
-                  ? 'bg-green-500 text-white'
-                  : 'bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-200 disabled:text-gray-400 text-white'
-              }\`}
-            >
-              {keySaved ? '✓ 저장됨' : '저장'}
-            </button>
           </div>
-          <p className="text-xs text-gray-400 mt-2">브라우저에 저장되며 서버에는 보관되지 않습니다. 무료 플랜 사용 가능.</p>
+        )}
+
+        {/* 채용 공고 (메인) */}
+        <div className={\`rounded-2xl border-2 transition-colors mb-4 \${jobPosting ? 'border-indigo-200 bg-white' : 'border-dashed border-gray-200 bg-white'}\`}>
+          <div className="flex items-center justify-between px-5 pt-4 pb-2">
+            <div className="flex items-center gap-2">
+              <Icon d={ICONS.target} size={15} color="#4f46e5"/>
+              <span className="text-sm font-semibold text-gray-800">채용 공고</span>
+              <span className="text-xs text-red-400 font-medium">필수</span>
+            </div>
+            {jobPosting && <span className="text-xs text-indigo-500 font-medium">✓ 입력됨</span>}
+          </div>
+          <textarea
+            value={jobPosting}
+            onChange={e => setJobPosting(e.target.value)}
+            placeholder={"채용 공고 전문을 여기에 붙여넣어 주세요.\\n\\n직무명, 담당업무, 자격요건, 우대사항이 모두 포함될수록\\n실제 면접에 가까운 질문이 만들어집니다."}
+            className="w-full h-56 px-5 pb-4 text-sm focus:outline-none text-gray-700 leading-relaxed bg-transparent"
+          />
         </div>
 
-        {/* 공고 + 회사 정보 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Icon d={ICONS.target} size={16} color="#4f46e5"/>
-              <span className="text-sm font-semibold text-gray-700">채용 공고</span>
-              <span className="text-xs text-red-400">필수</span>
-            </div>
-            <textarea
-              value={jobPosting}
-              onChange={e => setJobPosting(e.target.value)}
-              placeholder={"채용 공고 전문을 붙여넣어 주세요.\\n\\n직무명, 담당업무, 자격요건, 우대사항 등\\n모두 포함할수록 정확한 질문이 생성됩니다."}
-              className="w-full h-64 border border-gray-200 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 text-gray-700 leading-relaxed"
-            />
-          </div>
-          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Icon d={ICONS.building} size={16} color="#6366f1"/>
-              <span className="text-sm font-semibold text-gray-700">회사 정보</span>
-              <span className="text-xs text-gray-400">선택 (입력 시 질 향상)</span>
+        {/* 하단 행: 회사정보 + 면접유형 */}
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Icon d={ICONS.building} size={14} color="#6366f1"/>
+              <span className="text-xs font-semibold text-gray-700">회사 정보</span>
+              <span className="text-xs text-gray-400">선택</span>
             </div>
             <textarea
               value={companyInfo}
               onChange={e => setCompanyInfo(e.target.value)}
-              placeholder={"회사 소개, 사업 분야, 최근 뉴스, 비전,\\n핵심 가치, 경쟁사 등을 자유롭게 입력하세요.\\n\\n예) 당사는 HR SaaS 스타트업으로 2020년 설립,\\nSeries B 단계, 직원 150명 규모..."}
-              className="w-full h-64 border border-gray-200 rounded-xl p-4 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-indigo-400 text-gray-700 leading-relaxed"
+              placeholder={"회사 소개, 비전, 최근 뉴스 등\\n입력 시 질문 품질이 높아집니다."}
+              className="w-full h-28 text-xs focus:outline-none text-gray-700 leading-relaxed"
             />
           </div>
-        </div>
-
-        {/* 면접 유형 */}
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Icon d={ICONS.user} size={16} color="#4f46e5"/>
-            <span className="text-sm font-semibold text-gray-700">면접 유형</span>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            {['HR면접', '직무면접', '임원면접', '최종면접'].map(t => (
-              <button
-                key={t}
-                onClick={() => setInterviewType(t)}
-                className={\`px-5 py-2.5 rounded-xl text-sm font-medium transition-all \${
-                  interviewType === t
-                    ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'
-                }\`}
-              >{t}</button>
-            ))}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Icon d={ICONS.user} size={14} color="#4f46e5"/>
+              <span className="text-xs font-semibold text-gray-700">면접 유형</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {['HR면접', '직무면접', '임원면접', '최종면접'].map(t => (
+                <button
+                  key={t}
+                  onClick={() => setInterviewType(t)}
+                  className={\`py-2 rounded-xl text-xs font-medium transition-all \${
+                    interviewType === t
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'
+                  }\`}
+                >{t}</button>
+              ))}
+            </div>
           </div>
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm mb-5">
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm mb-4">
             {error}
           </div>
         )}
 
         <button
           onClick={handleAnalyze}
-          disabled={!jobPosting.trim() || !apiKey.trim()}
-          className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 text-white font-semibold rounded-2xl text-base transition-all shadow-lg shadow-indigo-200 hover:shadow-indigo-300 disabled:shadow-none"
+          disabled={!canStart}
+          className="w-full py-4 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-100 text-white disabled:text-gray-400 font-semibold rounded-2xl text-sm transition-all shadow-lg shadow-indigo-100 hover:shadow-indigo-200 disabled:shadow-none"
         >
-          면접 준비 시작하기 →
+          {canStart ? '면접 준비 시작하기 →' : btnHint}
         </button>
+      </div>
+    </div>
+  );};
       </div>
     </div>
   );
