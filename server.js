@@ -148,6 +148,46 @@ ${convText}
 });
 
 // ──────────────────────────────────────────
+// API: 답변 힌트 생성
+// ──────────────────────────────────────────
+app.post('/api/hint', async (req, res) => {
+  const { question, resumeText, position, company, apiKey } = req.body;
+  const key = STORED_KEY || apiKey;
+  if (!key) return res.status(400).json({ error: 'API 키가 필요합니다.' });
+  if (!resumeText?.trim()) return res.status(400).json({ error: '이력서를 먼저 입력해주세요.' });
+
+  const prompt = `당신은 ${company || '회사'} ${position || '직무'} 면접을 준비하는 지원자의 커리어 코치입니다.
+
+[지원자 이력서 및 경험]
+${resumeText}
+
+[추가 역량 - AI 활용 경험]
+- 2022년 11월부터 ChatGPT, Gemini, Claude 등 AI 도구 얼리 어답터로 블로그/유튜브 운영
+- 실무 프로젝트(SAP SuccessFactors 구축/운영)에 AI 도구 적극 활용하여 생산성 향상
+- 현재까지 매일 업무 및 실생활에서 AI 활용 중 (트렌드 기술 파악 및 실무 적용에 강점)
+
+[면접관 질문]
+${question}
+
+위 이력서를 바탕으로, 이 질문에 대한 효과적인 답변 예시를 작성해주세요.
+조건:
+- 실제로 말할 수 있는 자연스러운 구어체 한국어로 작성
+- 이력서의 구체적인 경험/수치를 인용하여 근거 있는 답변
+- 2~4문장 내외 (너무 길지 않게)
+- 면접관에게 어필되면서도 과장되지 않게, 자연스럽게
+- 반드시 순수 한국어만 사용 (일본어, 한자 절대 금지)
+
+답변 예시:`;
+
+  try {
+    const text = await groqCall(key, [{role: 'user', content: prompt}], 500);
+    res.json({ hint: text.trim() });
+  } catch (e) {
+    res.status(500).json({ error: friendlyError(e) });
+  }
+});
+
+// ──────────────────────────────────────────
 // HTML 앱 서빙
 // ──────────────────────────────────────────
 app.get('/', (req, res) => res.send(HTML));
@@ -304,6 +344,8 @@ function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [webcamOn, setWebcamOn] = useState(false);
   const [capturedFrames, setCapturedFrames] = useState([]);
+  const [resumeText, setResumeText] = useState(() => localStorage.getItem('iw_resume') || '');
+  const [hintMap, setHintMap] = useState({}); // {msgIndex: {loading, visible, text}}
   const chatEndRef = useRef(null);
   const videoRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -316,6 +358,29 @@ function App() {
     setKeyConnected(true);
     setKeyExpanded(false);
     setTimeout(() => setKeySaved(false), 2000);
+  };
+
+  const saveResume = (text) => {
+    setResumeText(text);
+    localStorage.setItem('iw_resume', text);
+  };
+
+  const fetchHint = async (question, msgIndex) => {
+    const h = hintMap[msgIndex];
+    if (h?.text) { setHintMap(prev => ({...prev, [msgIndex]: {...h, visible: !h.visible}})); return; }
+    if (!resumeText.trim()) { alert('이력서를 먼저 입력해주세요. (설정 화면 하단 이력서 입력란)'); return; }
+    setHintMap(prev => ({...prev, [msgIndex]: {loading: true, visible: true}}));
+    try {
+      const r = await fetch('/api/hint', {
+        method: 'POST',
+        headers: {'content-type': 'application/json'},
+        body: JSON.stringify({question, resumeText, position: analysisData?.position, company: analysisData?.company, apiKey}),
+      });
+      const data = await r.json();
+      setHintMap(prev => ({...prev, [msgIndex]: {loading: false, visible: true, text: data.hint || data.error || '힌트 생성 실패'}}));
+    } catch(e) {
+      setHintMap(prev => ({...prev, [msgIndex]: {loading: false, visible: true, text: '힌트 생성 실패'}}));
+    }
   };
 
   useEffect(() => {
@@ -414,6 +479,12 @@ function App() {
 
   const buildSystemPrompt = (data) => \`당신은 \${data.company}의 채용 담당 \${data.interviewerName} \${data.department} 소속 면접관입니다.
 지원자는 \${data.position} 포지션에 지원했으며, 오늘 \${interviewType}을 진행합니다.
+
+[언어 규칙 - 절대 준수]
+- 반드시 순수 한국어만 사용합니다
+- 일본어(ひらがな、カタカナ、漢字) 및 중국어 문자를 절대 사용하지 않습니다
+- 영어 단어는 직무 전문용어에만 사용합니다 (예: HR, SAP, SuccessFactors)
+- 자연스러운 구어체 한국어로 대화합니다
 
 [면접 진행 방식]
 - 한 번에 반드시 하나의 질문만 합니다
@@ -521,6 +592,7 @@ function App() {
     setJobPosting('');
     setCompanyInfo('');
     setError('');
+    setHintMap({});
   };
 
   // ── 화면 렌더링 ──
@@ -601,7 +673,7 @@ function App() {
                   value={apiKey}
                   onChange={e => { setApiKey(e.target.value); setKeyConnected(false); }}
                   onKeyDown={e => e.key === 'Enter' && saveApiKey()}
-                  placeholder="AIzaSy..."
+                  placeholder="gsk_..."
                   className="w-full border border-gray-200 bg-white rounded-xl px-4 py-2.5 text-sm font-mono pr-10 focus:outline-none focus:ring-2 focus:ring-gray-300"
                 />
                 <button onClick={() => setShowKey(!showKey)} className="absolute right-3 top-2.5 text-gray-400 hover:text-gray-600">
@@ -671,6 +743,22 @@ function App() {
               ))}
             </div>
           </div>
+        </div>
+
+        {/* 이력서 입력 */}
+        <div className="rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/40 p-4 mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+            <span className="text-xs font-semibold text-gray-700">내 이력서</span>
+            <span className="text-xs text-indigo-400 font-medium">💡 입력 시 답변 힌트 활성화</span>
+          </div>
+          <textarea
+            value={resumeText}
+            onChange={e => saveResume(e.target.value)}
+            placeholder={"경력, 주요 프로젝트, 성과, 스킬 등을 자유롭게 붙여넣으세요\\n면접 중 각 질문에 맞는 답변 힌트를 제공합니다"}
+            className="w-full h-32 text-xs focus:outline-none text-gray-700 leading-relaxed bg-transparent"
+          />
+          {resumeText.trim() && <p className="text-xs text-indigo-500 mt-1">✓ 저장됨 · 면접 중 💡 버튼으로 힌트를 확인하세요</p>}
         </div>
 
         {error && (
@@ -904,6 +992,26 @@ function App() {
                   }\`} style={m.role==='assistant'?{backdropFilter:'blur(12px)',border:'1px solid rgba(255,255,255,0.7)'}:{}}>
                     {m.content}
                   </div>
+                  {m.role === 'assistant' && (
+                    <div className="mt-1.5 ml-1">
+                      <button
+                        onClick={() => fetchHint(m.content, i)}
+                        className="flex items-center gap-1 text-xs text-indigo-500 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors"
+                      >
+                        <span>💡</span>
+                        <span>{hintMap[i]?.text ? (hintMap[i].visible ? '힌트 닫기' : '힌트 보기') : '답변 힌트'}</span>
+                      </button>
+                      {hintMap[i]?.visible && (
+                        <div className="mt-1.5 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2.5 text-xs text-indigo-800 leading-relaxed max-w-sm fade-in">
+                          {hintMap[i].loading ? (
+                            <span className="text-indigo-400">힌트 생성 중...</span>
+                          ) : (
+                            hintMap[i].text
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
