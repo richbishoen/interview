@@ -819,68 +819,90 @@ function App() {
 
   if (screen === 'briefing' && analysisData) {
     const allQ = Object.entries(analysisData.questions || {});
+    const totalQ = allQ.reduce((s, [, qs]) => s + qs.length, 0);
+    const catIcons = ['👤','💼','🏢','⚡','🧠'];
     return (
       <div className="min-h-screen bg-[#f2f0eb]">
-        {/* 헤더 */}
-        <div className="border-b border-gray-100 bg-white/80 backdrop-blur px-6 py-4 flex items-center justify-between">
+        <div className="border-b border-gray-100 bg-white/80 backdrop-blur px-6 py-4 flex items-center justify-between sticky top-0 z-10">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center">
-              <Icon d={ICONS.mic} size={16} color="white"/>
-            </div>
+            <div className="w-8 h-8 bg-gray-900 rounded-lg flex items-center justify-center"><Icon d={ICONS.mic} size={16} color="white"/></div>
             <span className="font-bold text-gray-900">InterviewAI</span>
           </div>
           <button onClick={() => setScreen('setup')} className="text-sm text-gray-500 hover:text-gray-700">← 다시 입력</button>
         </div>
 
-        <div className="max-w-5xl mx-auto px-6 py-8">
-          {/* 분석 완료 배너 */}
-          <div className="glass-dark rounded-2xl p-6 text-white mb-8 fade-in">
-            <div className="flex items-start justify-between">
+        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6 fade-in">
+
+          {/* 상단: 면접 정보 카드 */}
+          <div className="glass-dark rounded-2xl p-5 text-white">
+            <div className="flex items-start justify-between mb-4">
               <div>
-                <div className="text-gray-300 text-sm font-medium mb-1">분석 완료</div>
-                <h2 className="text-2xl font-bold mb-1">{analysisData.company}</h2>
-                <p className="text-gray-200">{analysisData.position} · {interviewType}</p>
+                <p className="text-gray-400 text-xs mb-1">분석 완료 · AI 면접관 준비됨</p>
+                <h2 className="text-xl font-bold">{analysisData.company}</h2>
+                <p className="text-gray-300 text-sm mt-0.5">{analysisData.position} · {interviewType}</p>
               </div>
-              <div className="text-right">
-                <div className="text-gray-300 text-xs mb-1">면접관</div>
-                <div className="font-semibold">{analysisData.interviewerName} 면접관</div>
-                <div className="text-gray-300 text-sm">{analysisData.department}</div>
+              <div className="text-right shrink-0 ml-4">
+                <div className="text-gray-400 text-xs mb-1">오늘의 면접관</div>
+                <div className="font-semibold text-sm">{analysisData.interviewerName}</div>
+                <div className="text-gray-400 text-xs">{analysisData.department}</div>
               </div>
             </div>
-            {/* 키워드 */}
-            <div className="mt-4 pt-4 border-t border-indigo-500 flex flex-wrap gap-2">
+            <div className="flex flex-wrap gap-2 pt-3 border-t border-white/10">
               {(analysisData.keywords || []).map(k => (
-                <span key={k} className="bg-stone-1000/50 text-white text-xs px-3 py-1 rounded-full">{k}</span>
+                <span key={k} className="bg-white/10 text-white/80 text-xs px-2.5 py-1 rounded-full">{k}</span>
               ))}
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            {/* 예상 질문 */}
-            <div className="md:col-span-2 glass rounded-2xl p-6">
-              <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
-                <Icon d={ICONS.target} size={18} color="#4f46e5"/>
-                예상 핵심 질문
-              </h3>
-              <div className="space-y-2">
-                {allQ.map(([category, qs]) => (
-                  <div key={category} className="border border-gray-100 rounded-xl overflow-hidden">
+          {/* 면접 진행 방식 안내 — 핵심 */}
+          <div className="bg-white rounded-2xl border border-gray-100 p-5">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4">면접은 이렇게 진행됩니다</p>
+            <div className="grid grid-cols-4 gap-3">
+              {[
+                {n:'1', label:'AI 면접관 질문', sub:'한 번에 하나씩', color:'bg-gray-900 text-white'},
+                {n:'2', label:'내 답변 입력', sub:'텍스트 또는 음성', color:'bg-gray-100 text-gray-700'},
+                {n:'3', label:'자연스럽게 이어짐', sub:'후속 질문 포함', color:'bg-gray-100 text-gray-700'},
+                {n:'4', label:'상세 피드백', sub:'점수·개선점 제공', color:'bg-gray-100 text-gray-700'},
+              ].map(({n, label, sub, color}) => (
+                <div key={n} className="text-center">
+                  <div className={\`w-8 h-8 rounded-full \${color} flex items-center justify-center text-sm font-bold mx-auto mb-2\`}>{n}</div>
+                  <p className="text-xs font-semibold text-gray-800 leading-tight">{label}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{sub}</p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 bg-amber-50 border border-amber-100 rounded-xl px-4 py-2.5 flex items-center gap-2">
+              <span className="text-sm">💡</span>
+              <p className="text-xs text-amber-700">총 <strong>{totalQ}개</strong> 예상 질문 · 예상 소요 시간 <strong>20~30분</strong> · 면접 중 💡 버튼으로 이력서 기반 답변 힌트 확인 가능</p>
+            </div>
+          </div>
+
+          {/* 예상 질문 + 준비 팁 */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <div className="md:col-span-2 bg-white rounded-2xl border border-gray-100 p-5">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">예상 질문 미리보기</p>
+              <div className="space-y-1.5">
+                {allQ.map(([category, qs], ci) => (
+                  <div key={category} className="rounded-xl overflow-hidden border border-gray-100">
                     <button
                       onClick={() => setOpenCategory(openCategory === category ? null : category)}
                       className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors text-left"
                     >
-                      <span className="font-medium text-gray-800 text-sm">{category}</span>
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-base">{catIcons[ci] || '📌'}</span>
+                        <span className="font-medium text-gray-800 text-sm">{category}</span>
+                      </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs bg-stone-100 text-gray-900 px-2 py-0.5 rounded-full">{qs.length}개</span>
-                        <Icon d={ICONS.chevron} size={16} color="#9ca3af" className={\`transition-transform \${openCategory === category ? 'rotate-90' : ''}\`}/>
+                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">{qs.length}개</span>
+                        <span className="text-gray-300 text-xs">{openCategory === category ? '▲' : '▼'}</span>
                       </div>
                     </button>
                     {openCategory === category && (
-                      <div className="border-t border-gray-100 bg-gray-50/50 px-4 py-3 space-y-2">
+                      <div className="border-t border-gray-100 bg-gray-50/60 px-4 py-3 space-y-2.5">
                         {qs.map((q, i) => (
-                          <div key={i} className="flex gap-2 text-sm text-gray-700">
-                            <span className="text-gray-400 font-bold shrink-0">Q{i+1}.</span>
-                            <span>{q}</span>
+                          <div key={i} className="flex gap-2.5 text-sm text-gray-700">
+                            <span className="text-indigo-400 font-bold shrink-0 text-xs mt-0.5">Q{i+1}</span>
+                            <span className="leading-snug">{q}</span>
                           </div>
                         ))}
                       </div>
@@ -890,31 +912,24 @@ function App() {
               </div>
             </div>
 
-            {/* 준비 팁 + 회사 가치 */}
-            <div className="space-y-5">
-              <div className="glass rounded-2xl p-5">
-                <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2 text-sm">
-                  <Icon d={ICONS.award} size={16} color="#f59e0b"/>
-                  회사 핵심 가치
-                </h3>
+            <div className="space-y-4">
+              <div className="bg-white rounded-2xl border border-gray-100 p-5">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">회사 핵심 가치</p>
                 <div className="space-y-2">
                   {(analysisData.companyValues || []).map((v, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm text-gray-700">
-                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-400"/>
+                    <div key={i} className="flex items-start gap-2 text-sm text-gray-700">
+                      <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1.5 shrink-0"/>
                       {v}
                     </div>
                   ))}
                 </div>
               </div>
               <div className="bg-amber-50 rounded-2xl border border-amber-100 p-5">
-                <h3 className="font-bold text-amber-800 mb-3 text-sm flex items-center gap-2">
-                  <Icon d={ICONS.star} size={16} color="#d97706"/>
-                  준비 팁
-                </h3>
-                <div className="space-y-2">
+                <p className="text-xs font-semibold text-amber-500 uppercase tracking-wider mb-3">준비 팁</p>
+                <div className="space-y-2.5">
                   {(analysisData.tips || []).map((t, i) => (
-                    <div key={i} className="text-sm text-amber-700 flex gap-2">
-                      <span className="shrink-0">•</span>
+                    <div key={i} className="text-xs text-amber-800 flex gap-2 leading-relaxed">
+                      <span className="shrink-0 text-amber-400 font-bold">{i+1}.</span>
                       <span>{t}</span>
                     </div>
                   ))}
@@ -923,18 +938,26 @@ function App() {
             </div>
           </div>
 
+          {/* 시작 버튼 */}
           <button
             onClick={handleStartInterview}
-            className="w-full py-4 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-2xl text-lg transition-all shadow-lg shadow-black/10 hover:shadow-black/15"
+            className="w-full py-4 bg-gray-900 hover:bg-gray-800 text-white font-bold rounded-2xl text-base transition-all shadow-xl shadow-black/10 hover:shadow-black/20 flex items-center justify-center gap-3"
           >
-            면접 시작하기 →
+            <span>면접 시작하기</span>
+            <span className="text-gray-400 text-sm font-normal">→ {analysisData.interviewerName} 면접관과 {interviewType}</span>
           </button>
         </div>
       </div>
     );
   }
 
-  if (screen === 'interview') return (
+  if (screen === 'interview') {
+  const answeredCount = messages.filter(m => m.role === 'user').length;
+  const questionCount = messages.filter(m => m.role === 'assistant').length;
+  const allQFlat = Object.values(analysisData?.questions || {}).flat();
+  const totalEstimate = allQFlat.length || 10;
+  const progressPct = Math.min(100, Math.round((answeredCount / totalEstimate) * 100));
+  return (
     <div className="h-screen flex flex-col bg-[#f2f0eb]">
       {/* 상단 바 */}
       <div className="glass px-5 py-3 flex items-center justify-between shrink-0 z-10">
@@ -948,14 +971,21 @@ function App() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* 음성 모드 토글 */}
+          {/* 진행 카운터 */}
+          {answeredCount > 0 && (
+            <div className="hidden sm:flex items-center gap-2 bg-white/60 border border-gray-200 px-3 py-1.5 rounded-xl">
+              <div className="w-16 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                <div className="h-full bg-gray-800 rounded-full transition-all" style={{width: progressPct + '%'}}/>
+              </div>
+              <span className="text-xs text-gray-600 font-medium">{answeredCount}회 답변</span>
+            </div>
+          )}
           <button
             onClick={() => { setVoiceMode(v => !v); window.speechSynthesis.cancel(); }}
             className={\`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all \${voiceMode ? 'bg-gray-900 text-white' : 'bg-white/60 text-gray-600 border border-gray-200 hover:bg-white'}\`}
           >
             <Icon d={ICONS.mic} size={12}/> {voiceMode ? '음성 ON' : '음성'}
           </button>
-          {/* 화상 토글 */}
           <button
             onClick={toggleWebcam}
             className={\`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all \${webcamOn ? 'bg-gray-900 text-white' : 'bg-white/60 text-gray-600 border border-gray-200 hover:bg-white'}\`}
@@ -963,8 +993,8 @@ function App() {
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 7l-7 5 7 5V7zM1 5h15a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H1a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/></svg>
             {webcamOn ? '화상 ON' : '화상'}
           </button>
-          <button onClick={handleEndInterview} className="px-4 py-1.5 bg-gray-900 hover:bg-gray-800 text-white text-xs font-medium rounded-xl transition-colors">
-            종료 →
+          <button onClick={handleEndInterview} className="px-4 py-1.5 bg-red-500 hover:bg-red-600 text-white text-xs font-medium rounded-xl transition-colors">
+            면접 종료
           </button>
         </div>
       </div>
@@ -985,19 +1015,37 @@ function App() {
         {!webcamOn && <video ref={videoRef} autoPlay muted playsInline className="hidden"/>}
 
         {/* 사이드바 */}
-        <div className="w-56 flex flex-col overflow-y-auto shrink-0 hidden md:flex" style={{background:'rgba(255,255,255,0.45)', borderRight:'1px solid rgba(0,0,0,0.05)'}}>
-          <div className="px-4 py-3" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">예상 질문</p>
+        <div className="w-60 flex flex-col shrink-0 hidden md:flex" style={{background:'rgba(255,255,255,0.45)', borderRight:'1px solid rgba(0,0,0,0.05)'}}>
+          <div className="px-4 py-3 flex items-center justify-between" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">진행 현황</p>
+            <span className="text-xs text-gray-400">{answeredCount}/{totalEstimate} 답변</span>
+          </div>
+          {/* 전체 진행 바 */}
+          <div className="px-4 py-2" style={{borderBottom:'1px solid rgba(0,0,0,0.05)'}}>
+            <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div className="h-full bg-gray-800 rounded-full transition-all duration-500" style={{width: progressPct + '%'}}/>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">{progressPct}% 완료</p>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
-            {Object.entries(analysisData?.questions || {}).map(([cat, qs]) => (
-              <div key={cat} className="mb-4">
-                <p className="text-xs font-semibold text-gray-500 px-2 mb-1.5">{cat}</p>
-                {qs.map((q, i) => (
-                  <div key={i} className="text-xs text-gray-500 px-2 py-1.5 rounded-lg hover:bg-white/60 leading-relaxed mb-0.5 cursor-default transition-colors">{q}</div>
-                ))}
-              </div>
-            ))}
+            {Object.entries(analysisData?.questions || {}).map(([cat, qs], ci) => {
+              const catIcons2 = ['👤','💼','🏢','⚡','🧠'];
+              return (
+                <div key={cat} className="mb-3">
+                  <div className="flex items-center gap-1.5 px-2 mb-1.5">
+                    <span className="text-xs">{catIcons2[ci] || '📌'}</span>
+                    <p className="text-xs font-semibold text-gray-600">{cat}</p>
+                    <span className="text-gray-300 text-xs ml-auto">{qs.length}</span>
+                  </div>
+                  {qs.map((q, i) => (
+                    <div key={i} className="text-xs text-gray-400 px-2 py-1.5 rounded-lg leading-relaxed mb-0.5 hover:bg-white/70 hover:text-gray-600 transition-colors cursor-default">{q}</div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+          <div className="px-4 py-3" style={{borderTop:'1px solid rgba(0,0,0,0.05)'}}>
+            <p className="text-xs text-gray-400 text-center">💡 각 질문 아래 힌트 버튼</p>
           </div>
         </div>
 
@@ -1124,7 +1172,7 @@ function App() {
         </div>
       </div>
     </div>
-  );
+  );}
 
   if (screen === 'feedback' && feedbackData) {
     const gradeColor = feedbackData.overallScore >= 80 ? 'text-green-600' : feedbackData.overallScore >= 60 ? 'text-gray-900' : 'text-orange-600';
