@@ -2,53 +2,35 @@ const express = require('express');
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
-const STORED_KEY = process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const STORED_KEY = process.env.GROQ_API_KEY || '';
 
-async function geminiCall(key, messages, maxTokens = 2048) {
-  const systemMsg = messages.find(m => m.role === 'system');
-  const chatMsgs = messages.filter(m => m.role !== 'system');
-
-  const contents = chatMsgs.map(m => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
-
-  const body = { contents, generationConfig: { maxOutputTokens: maxTokens } };
-  if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
-
-  // gemini-2.0-flash 먼저, 실패 시 gemini-1.5-flash 폴백
-  for (const model of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/'
-      + model + ':generateContent?key=' + key;
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await r.json();
-    if (!data.error) return data.candidates[0].content.parts[0].text;
-
+async function groqCall(key, messages, maxTokens = 2048) {
+  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'authorization': 'Bearer ' + key,
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      messages,
+      max_tokens: maxTokens,
+    }),
+  });
+  const data = await r.json();
+  if (data.error) {
     const msg = data.error.message || '';
-    // 할당량/인증 오류는 즉시 사용자 친화 메시지로 변환
-    if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
-      throw new Error('API_QUOTA');
-    }
-    if (msg.includes('API key') || msg.includes('API_KEY') || msg.includes('invalid')) {
-      throw new Error('API_INVALID');
-    }
-    if (msg.includes('PERMISSION_DENIED')) {
-      throw new Error('API_PERMISSION');
-    }
-    // 모델별 에러면 다음 모델 시도, 그 외는 즉시 throw
-    if (model === 'gemini-1.5-flash') throw new Error(msg);
+    const code = data.error.code || '';
+    if (code.includes('rate_limit') || msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('quota')) throw new Error('API_QUOTA');
+    if (code.includes('invalid_api_key') || msg.includes('Invalid API Key') || msg.includes('No API key')) throw new Error('API_INVALID');
+    throw new Error(msg);
   }
+  return data.choices[0].message.content;
 }
 
 function friendlyError(e) {
-  if (e.message === 'API_QUOTA') return 'API 키 할당량이 초과되었습니다. aistudio.google.com에서 새 키를 발급해주세요.';
-  if (e.message === 'API_INVALID') return 'API 키가 유효하지 않습니다. 키를 다시 확인해주세요.';
-  if (e.message === 'API_PERMISSION') return 'API 키 권한이 없습니다. Google AI Studio에서 키를 새로 발급해주세요.';
+  if (e.message === 'API_QUOTA') return 'API 요청 한도에 도달했습니다. 잠시 후 다시 시도하거나 console.groq.com에서 한도를 확인해주세요.';
+  if (e.message === 'API_INVALID') return 'API 키가 유효하지 않습니다. console.groq.com → API Keys에서 키를 확인해주세요.';
   return e.message;
 }
 
@@ -87,7 +69,7 @@ ${companyInfo || '별도 회사 정보 없음'}
 }`;
 
   try {
-    const text = await geminiCall(key, [{ role: 'user', content: prompt }], 2048);
+    const text = await groqCall(key, [{ role: 'user', content: prompt }], 2048);
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return res.status(500).json({ error: '분석 결과 파싱 실패' });
     res.json(JSON.parse(match[0]));
@@ -104,10 +86,10 @@ app.post('/api/interview', async (req, res) => {
   const key = STORED_KEY || apiKey;
   if (!key) return res.status(400).json({ error: 'API 키가 필요합니다.' });
 
-  const geminiMessages = [{ role: 'system', content: systemPrompt }, ...messages];
+  const groqMessages = [{ role: 'system', content: systemPrompt }, ...messages];
 
   try {
-    const text = await geminiCall(key, geminiMessages, 600);
+    const text = await groqCall(key, groqMessages, 600);
     res.json({ text });
   } catch (e) {
     res.status(500).json({ error: friendlyError(e) });
@@ -152,37 +134,12 @@ ${convText}
 
   try {
     // 1) 텍스트 피드백
-    const text = await geminiCall(key, [{ role: 'user', content: textPrompt }], 3000);
+    const text = await groqCall(key, [{ role: 'user', content: textPrompt }], 3000);
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return res.status(500).json({ error: '피드백 파싱 실패' });
     const result = JSON.parse(match[0]);
 
-    // 2) 화상 피드백 (프레임이 있을 때만)
-    if (frames && frames.length > 0) {
-      try {
-        const parts = [
-          { text: `이 면접 지원자의 화면 캡처 이미지들을 분석해주세요. 면접 중 비언어적 커뮤니케이션을 평가하여 반드시 아래 JSON 형식으로만 답변하세요 (순수 JSON):
-{
-  "eyeContact": { "score": 4, "comment": "시선 처리 평가 (1-2문장)" },
-  "posture": { "score": 3, "comment": "자세 평가 (1-2문장)" },
-  "expression": { "score": 4, "comment": "표정 평가 (1-2문장)" },
-  "overall": "비언어적 커뮤니케이션 종합 평가 (2문장)",
-  "tips": ["개선 팁1", "개선 팁2"]
-}` },
-          ...frames.map(f => ({ inline_data: { mime_type: 'image/jpeg', data: f } })),
-        ];
-        const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + key;
-        const r = await fetch(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ contents: [{ parts }] }),
-        });
-        const vd = await r.json();
-        const vtext = vd.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        const vm = vtext.match(/\{[\s\S]*\}/);
-        if (vm) result.visualFeedback = JSON.parse(vm[0]);
-      } catch(e) { /* 화상 분석 실패해도 텍스트 결과는 반환 */ }
-    }
+    // 화상 분석: Groq는 Vision 미지원 — 웹캠 프레임 분석 비활성화
 
     res.json(result);
   } catch (e) {
@@ -429,7 +386,7 @@ function App() {
   // 공고 분석
   const handleAnalyze = async () => {
     if (!jobPosting.trim()) { setError('채용 공고를 입력해주세요.'); return; }
-    if (!apiKey.trim()) { setError('Anthropic API 키를 입력해주세요.'); return; }
+    if (!apiKey.trim()) { setError('Groq API 키를 입력해주세요.'); return; }
     setError('');
     setScreen('analyzing');
     try {
@@ -632,8 +589,8 @@ function App() {
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <Icon d={ICONS.zap} size={14} color="#4f46e5"/>
-                <span className="text-sm font-semibold text-gray-700">Gemini API 키</span>
-                <span className="text-xs text-gray-400">aistudio.google.com → Get API Key · 무료</span>
+                <span className="text-sm font-semibold text-gray-700">Groq API 키</span>
+                <span className="text-xs text-gray-400">console.groq.com → API Keys · 무료</span>
               </div>
               {keyConnected && <button onClick={() => setKeyExpanded(false)} className="text-xs text-gray-400 hover:text-gray-600">닫기</button>}
             </div>
@@ -721,10 +678,10 @@ function App() {
             <span className="shrink-0 mt-0.5">⚠️</span>
             <div>
               <span>{error}</span>
-              {(error.includes('할당량') || error.includes('유효하지') || error.includes('권한')) && (
-                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer"
+              {(error.includes('한도') || error.includes('유효하지')) && (
+                <a href="https://console.groq.com/keys" target="_blank" rel="noreferrer"
                   className="block mt-1 text-xs underline text-red-600 font-medium">
-                  → aistudio.google.com에서 새 키 발급하기
+                  → console.groq.com에서 새 키 발급하기
                 </a>
               )}
             </div>
