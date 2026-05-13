@@ -6,7 +6,6 @@ const STORED_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = 'gemini-2.0-flash';
 
 async function geminiCall(key, messages, maxTokens = 2048) {
-  // messages: [{role, content}] — system은 첫 번째 항목
   const systemMsg = messages.find(m => m.role === 'system');
   const chatMsgs = messages.filter(m => m.role !== 'system');
 
@@ -15,25 +14,42 @@ async function geminiCall(key, messages, maxTokens = 2048) {
     parts: [{ text: m.content }],
   }));
 
-  const body = {
-    contents,
-    generationConfig: { maxOutputTokens: maxTokens },
-  };
-  if (systemMsg) {
-    body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+  const body = { contents, generationConfig: { maxOutputTokens: maxTokens } };
+  if (systemMsg) body.systemInstruction = { parts: [{ text: systemMsg.content }] };
+
+  // gemini-2.0-flash 먼저, 실패 시 gemini-1.5-flash 폴백
+  for (const model of ['gemini-2.0-flash', 'gemini-1.5-flash']) {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/'
+      + model + ':generateContent?key=' + key;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json();
+    if (!data.error) return data.candidates[0].content.parts[0].text;
+
+    const msg = data.error.message || '';
+    // 할당량/인증 오류는 즉시 사용자 친화 메시지로 변환
+    if (msg.includes('quota') || msg.includes('RESOURCE_EXHAUSTED')) {
+      throw new Error('API_QUOTA');
+    }
+    if (msg.includes('API key') || msg.includes('API_KEY') || msg.includes('invalid')) {
+      throw new Error('API_INVALID');
+    }
+    if (msg.includes('PERMISSION_DENIED')) {
+      throw new Error('API_PERMISSION');
+    }
+    // 모델별 에러면 다음 모델 시도, 그 외는 즉시 throw
+    if (model === 'gemini-1.5-flash') throw new Error(msg);
   }
+}
 
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/'
-    + GEMINI_MODEL + ':generateContent?key=' + key;
-
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await r.json();
-  if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
-  return data.candidates[0].content.parts[0].text;
+function friendlyError(e) {
+  if (e.message === 'API_QUOTA') return 'API 키 할당량이 초과되었습니다. aistudio.google.com에서 새 키를 발급해주세요.';
+  if (e.message === 'API_INVALID') return 'API 키가 유효하지 않습니다. 키를 다시 확인해주세요.';
+  if (e.message === 'API_PERMISSION') return 'API 키 권한이 없습니다. Google AI Studio에서 키를 새로 발급해주세요.';
+  return e.message;
 }
 
 // ──────────────────────────────────────────
@@ -76,7 +92,7 @@ ${companyInfo || '별도 회사 정보 없음'}
     if (!match) return res.status(500).json({ error: '분석 결과 파싱 실패' });
     res.json(JSON.parse(match[0]));
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: friendlyError(e) });
   }
 });
 
@@ -94,7 +110,7 @@ app.post('/api/interview', async (req, res) => {
     const text = await geminiCall(key, geminiMessages, 600);
     res.json({ text });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: friendlyError(e) });
   }
 });
 
@@ -170,7 +186,7 @@ ${convText}
 
     res.json(result);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: friendlyError(e) });
   }
 });
 
@@ -701,8 +717,17 @@ function App() {
         </div>
 
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm mb-4">
-            {error}
+          <div className="bg-red-50 border border-red-100 text-red-700 rounded-xl px-4 py-3 text-sm mb-4 flex items-start gap-2">
+            <span className="shrink-0 mt-0.5">⚠️</span>
+            <div>
+              <span>{error}</span>
+              {(error.includes('할당량') || error.includes('유효하지') || error.includes('권한')) && (
+                <a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer"
+                  className="block mt-1 text-xs underline text-red-600 font-medium">
+                  → aistudio.google.com에서 새 키 발급하기
+                </a>
+              )}
+            </div>
           </div>
         )}
 
