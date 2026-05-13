@@ -4,6 +4,48 @@ app.use(express.json({ limit: '10mb' }));
 
 const STORED_KEY = process.env.GROQ_API_KEY || '';
 
+const RESUME_TEXT = `
+[지원자: 최성필 | 경력 8년 5개월]
+
+■ 핵심 강점
+- SAP SuccessFactors 채용(RCM), 채용 마케팅(RMK), 온보딩(ONB) 모듈 구축 및 운영 전문가
+- 2022년 11월부터 ChatGPT 얼리어답터, Gemini/Claude 등 AI 도구를 블로그·유튜브로 기록하며 실무에 적극 활용 중
+- HTML/CSS/JavaScript 활용한 채용 사이트 커스텀 UI/UX 직접 구현 가능
+- 채용·조직문화 관리, 운영 규정 제정, 정부지원금 수혜 실적 (약 6억 이상)
+
+■ 경력 1 | 컴포인 (2021.05 ~ 2025.11, 4년 7개월) — SAP SF Recruiting/ONB 운영 매니저
+[신규 구축 프로젝트 고객사: 롯데웰푸드, GC녹십자, SPC]
+- RCM 구축: 채용 요청~오퍼 승인 워크플로우·XML 템플릿 설계, 스크리닝 질문 라이브러리 연동, 온라인 오퍼·모바일 승인으로 채용 리드타임 단축
+- RMK 구축: 채용 브랜딩 강화를 위한 채용 사이트 신규 구축, HTML/CSS/JS로 기본 템플릿을 넘어선 디자이너 수준 UI/UX 구현
+- ONB 구축: RCM·EC 모듈 데이터 연동으로 신규 입사자 정보 자동화, 온보딩 대시보드 설계, 전자서명 연동으로 서류 전산화
+
+[운영 담당 고객사: DDI, KB국민은행, 한독, GC녹십자, 롯데웰푸드, LS전선, HYBE, Yanolja, Amore Pacific]
+- 약 20개 법인 채용 요청서·지원서·오퍼 레터 템플릿 설계 및 지속 개선
+- Talent Pipeline 전략 수립: 지원자 상태(Applicant Status) 재설계, 이메일 자동화로 휴먼 에러 감소
+- 워크플로우·RBP 권한 체계 관리, DPCS 2.0 개인정보보호 정책 적용
+- HYBE JAPAN 등 해외 법인 채용 프로세스 현지화 지원
+- 보유 자격: SAP SuccessFactors Recruiting Recruiter Experience Academy(RCM) Certificate
+
+■ 경력 2 | 하이컨시(대치동 시대인재 학원) (2019.11 ~ 2021.04, 1년 6개월) — HR 주임
+- 채용 전 과정 운영 (공고 게재, 이력서 검토, 1·2차 면접, 입사 처리)
+- 복리후생 도입: 복지포인트(웰트리), 장기근속 여행(필리핀·태국·홍콩), 건강검진(차병원) 등 운영 규정 제정
+- 정부지원금 약 6억 이상 수혜: 유연근무제(인당 520만원), 청년 추가 고용장려금 1억1천만원, 워라벨 장려금 3억5천만원 등
+- 임금 관리: Excel + 더존 ERP, 4대보험, 근로계약, 퇴직금, 연차 관리 전담
+
+■ 경력 3 | 육군포병부대 (2015.03 ~ 2017.06, 2년 4개월) — 인사과장(인사장교)
+- 부대 컴플레인 수렴 채널 운영, 3개월 만에 50% 감소 달성 (면담·주간회의·피드백 시스템)
+- 국내 최초 천무(다련장 로켓포) 부대 개편 기획 총괄: 국방부 장관 VIP 행사 성공적 진행, 이후 10개 예하부대 가이드라인 적용
+
+■ 학력
+- Kansai College of Business and Languages 일본어과 졸업 (2017.09 ~ 2019.03)
+- 중앙대학교 생명자원공학부 졸업 (2011.03 ~ 2015.02)
+
+■ 자격/스킬
+- SAP SuccessFactors Recruiting 인증, ERP 인사정보관리사 2급, 컴퓨터활용능력 2급, MOS Master
+- 일본어 JLPT 2급 (일상 회화), 영어 TOEIC Speaking 140/6급
+- AI 도구: ChatGPT·Gemini·Claude 실무 활용 (채용 JD 작성, 자동화, 데이터 분석 등)
+`;
+
 async function groqCall(key, messages, maxTokens = 2048) {
   const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -151,20 +193,14 @@ ${convText}
 // API: 답변 힌트 생성
 // ──────────────────────────────────────────
 app.post('/api/hint', async (req, res) => {
-  const { question, resumeText, position, company, apiKey } = req.body;
+  const { question, position, company, apiKey } = req.body;
   const key = STORED_KEY || apiKey;
   if (!key) return res.status(400).json({ error: 'API 키가 필요합니다.' });
-  if (!resumeText?.trim()) return res.status(400).json({ error: '이력서를 먼저 입력해주세요.' });
 
   const prompt = `당신은 ${company || '회사'} ${position || '직무'} 면접을 준비하는 지원자의 커리어 코치입니다.
 
-[지원자 이력서 및 경험]
-${resumeText}
-
-[추가 역량 - AI 활용 경험]
-- 2022년 11월부터 ChatGPT, Gemini, Claude 등 AI 도구 얼리 어답터로 블로그/유튜브 운영
-- 실무 프로젝트(SAP SuccessFactors 구축/운영)에 AI 도구 적극 활용하여 생산성 향상
-- 현재까지 매일 업무 및 실생활에서 AI 활용 중 (트렌드 기술 파악 및 실무 적용에 강점)
+[지원자 이력서]
+${RESUME_TEXT}
 
 [면접관 질문]
 ${question}
@@ -344,7 +380,6 @@ function App() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [webcamOn, setWebcamOn] = useState(false);
   const [capturedFrames, setCapturedFrames] = useState([]);
-  const [resumeText, setResumeText] = useState(() => localStorage.getItem('iw_resume') || '');
   const [hintMap, setHintMap] = useState({}); // {msgIndex: {loading, visible, text}}
   const chatEndRef = useRef(null);
   const videoRef = useRef(null);
@@ -360,21 +395,15 @@ function App() {
     setTimeout(() => setKeySaved(false), 2000);
   };
 
-  const saveResume = (text) => {
-    setResumeText(text);
-    localStorage.setItem('iw_resume', text);
-  };
-
   const fetchHint = async (question, msgIndex) => {
     const h = hintMap[msgIndex];
     if (h?.text) { setHintMap(prev => ({...prev, [msgIndex]: {...h, visible: !h.visible}})); return; }
-    if (!resumeText.trim()) { alert('이력서를 먼저 입력해주세요. (설정 화면 하단 이력서 입력란)'); return; }
     setHintMap(prev => ({...prev, [msgIndex]: {loading: true, visible: true}}));
     try {
       const r = await fetch('/api/hint', {
         method: 'POST',
         headers: {'content-type': 'application/json'},
-        body: JSON.stringify({question, resumeText, position: analysisData?.position, company: analysisData?.company, apiKey}),
+        body: JSON.stringify({question, position: analysisData?.position, company: analysisData?.company, apiKey}),
       });
       const data = await r.json();
       setHintMap(prev => ({...prev, [msgIndex]: {loading: false, visible: true, text: data.hint || data.error || '힌트 생성 실패'}}));
@@ -745,21 +774,6 @@ function App() {
           </div>
         </div>
 
-        {/* 이력서 입력 */}
-        <div className="rounded-2xl border border-dashed border-indigo-200 bg-indigo-50/40 p-4 mb-4">
-          <div className="flex items-center gap-2 mb-2">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-            <span className="text-xs font-semibold text-gray-700">내 이력서</span>
-            <span className="text-xs text-indigo-400 font-medium">💡 입력 시 답변 힌트 활성화</span>
-          </div>
-          <textarea
-            value={resumeText}
-            onChange={e => saveResume(e.target.value)}
-            placeholder={"경력, 주요 프로젝트, 성과, 스킬 등을 자유롭게 붙여넣으세요\\n면접 중 각 질문에 맞는 답변 힌트를 제공합니다"}
-            className="w-full h-32 text-xs focus:outline-none text-gray-700 leading-relaxed bg-transparent"
-          />
-          {resumeText.trim() && <p className="text-xs text-indigo-500 mt-1">✓ 저장됨 · 면접 중 💡 버튼으로 힌트를 확인하세요</p>}
-        </div>
 
         {error && (
           <div className="bg-red-50 border border-red-100 text-red-700 rounded-xl px-4 py-3 text-sm mb-4 flex items-start gap-2">
